@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bee Forage Analyser</title>
+<meta name="description" content="Scout bee forage potential for any apiary location in England. Analyse crops, flowering seasons and honey profiles — powered by DEFRA CROME 2025.">
+<meta property="og:title" content="Bee Forage Analyser">
+<meta property="og:description" content="Scout bee forage potential for any apiary location in England. Powered by DEFRA CROME 2025 crop map data.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐝</text></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --honey: #E8A020; --honey-light: #FDF3E0; --honey-dark: #7A4F0A;
+    --comb: #1A1208; --surface: #FFFEF9; --muted: #8A7A60;
+    --border: rgba(140,110,50,0.18); --radius: 10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Georgia', serif; background: var(--surface); color: var(--comb); min-height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 14px; }
+  .logo { width: 40px; height: 40px; background: var(--honey); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+  header h1 { font-size: 19px; font-weight: normal; }
+  header p { font-size: 12px; color: var(--muted); font-family: system-ui, sans-serif; margin-top: 2px; }
+  .app-body { display: flex; flex: 1; height: calc(100vh - 73px); }
+  #map { flex: 1; cursor: crosshair !important; }
+  .sidebar { width: 340px; flex-shrink: 0; border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
+  .s-section { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .s-section h2 { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); font-family: system-ui, sans-serif; margin-bottom: 10px; }
+  .hint { font-size: 11px; font-family: system-ui, sans-serif; color: var(--muted); line-height: 1.5; margin-top: 6px; }
+  .coords { font-size: 11px; font-family: 'Courier New', monospace; color: var(--honey-dark); background: var(--honey-light); padding: 7px 10px; border-radius: 6px; border: 1px solid rgba(140,110,50,0.2); margin-top: 7px; }
+  .btn { width: 100%; padding: 11px; background: var(--honey); color: white; border: none; border-radius: var(--radius); font-size: 14px; font-family: 'Georgia', serif; cursor: pointer; transition: background 0.15s; }
+  .btn:hover { background: #C8880E; }
+  .btn:disabled { background: #CCC; cursor: not-allowed; }
+  .results-area { flex: 1; overflow-y: auto; padding: 16px 18px; }
+  .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; text-align: center; color: var(--muted); font-family: system-ui, sans-serif; font-size: 12px; line-height: 1.6; }
+  .empty .icon { font-size: 32px; }
+  .loading { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 12px; }
+  .spinner { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--honey); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  .loading p { font-size: 12px; font-family: system-ui, sans-serif; color: var(--muted); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .stat-row { display: flex; gap: 6px; margin-bottom: 12px; }
+  .stat { flex: 1; background: var(--honey-light); border-radius: 8px; padding: 8px 10px; }
+  .stat-label { font-size: 10px; font-family: system-ui, sans-serif; color: var(--muted); margin-bottom: 3px; }
+  .stat-val { font-size: 15px; font-weight: bold; color: var(--honey-dark); font-family: system-ui, sans-serif; }
+  .crop-list { display: flex; flex-direction: column; gap: 7px; }
+  .crop-item { display: flex; flex-direction: column; gap: 3px; }
+  .crop-hdr { display: flex; justify-content: space-between; align-items: baseline; }
+  .crop-name { font-size: 12px; font-family: system-ui, sans-serif; }
+  .crop-pct { font-size: 12px; font-family: 'Courier New', monospace; font-weight: bold; color: var(--honey-dark); }
+  .bar-track { height: 5px; background: rgba(140,110,50,0.12); border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; background: var(--honey); transition: width 0.5s ease; }
+  .honey-box { background: var(--honey-light); border: 1px solid rgba(140,110,50,0.22); border-radius: var(--radius); padding: 12px 14px; margin-top: 12px; }
+  .honey-box h3 { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-family: system-ui, sans-serif; margin-bottom: 6px; }
+  .honey-box p { font-size: 12px; font-family: system-ui, sans-serif; color: var(--comb); line-height: 1.6; }
+  .error { background: #FEF0F0; border: 1px solid #FCCACA; border-radius: var(--radius); padding: 12px; font-size: 12px; font-family: system-ui, sans-serif; color: #7A1010; line-height: 1.6; }
+  .error code { background: rgba(0,0,0,0.06); padding: 2px 5px; border-radius: 4px; font-size: 11px; }
+  .attribution { font-size: 10px; font-family: system-ui, sans-serif; color: var(--muted); text-align: center; padding: 7px; border-top: 1px solid var(--border); }
+  /* Search */
+  .search-row { display: flex; gap: 6px; }
+  .search-row input { flex: 1; font-size: 12px; font-family: system-ui, sans-serif; border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; background: var(--surface); color: var(--comb); outline: none; }
+  .search-row input:focus { border-color: var(--honey); }
+  .search-row button { width: 34px; flex-shrink: 0; background: var(--honey); color: white; border: none; border-radius: 7px; font-size: 17px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s; }
+  .search-row button:hover { background: #C8880E; }
+  /* Hive selector */
+  .hive-btns { display: flex; gap: 5px; margin-top: 8px; flex-wrap: wrap; }
+  .hive-btn { display: flex; align-items: center; gap: 5px; padding: 4px 9px; font-size: 11px; font-family: system-ui, sans-serif; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--surface); color: var(--comb); transition: all 0.12s; }
+  .hive-btn::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--hc, var(--honey)); flex-shrink: 0; }
+  .hive-btn.active { background: var(--honey-light); border-color: var(--honey); font-weight: 600; }
+  .hive-btn.add::before { display: none; }
+  .hive-btn.add { color: var(--muted); }
+  /* Timeline */
+  #tl { display: block; width: 100%; cursor: crosshair; border-radius: 4px; }
+  /* Hive result card */
+  .hive-card { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+  .hive-card:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .hive-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .hive-label { display: flex; align-items: center; gap: 7px; }
+  .hive-label strong { font-size: 13px; }
+  .hive-label span { font-size: 11px; font-family: system-ui, sans-serif; color: var(--muted); }
+  .hive-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .rating { font-size: 15px; font-weight: bold; width: 30px; height: 30px; border-radius: 7px; display: flex; align-items: center; justify-content: center; color: white; flex-shrink: 0; }
+  /* Forage calendar */
+  .cal-section { margin: 10px 0 12px; }
+  .cal-section h4 { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-family: system-ui, sans-serif; margin-bottom: 6px; }
+  .cal-wrap { display: flex; gap: 2px; align-items: flex-end; height: 44px; }
+  .cal-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .cal-bar { width: 100%; border-radius: 2px 2px 0 0; min-height: 2px; }
+  .cal-mo { font-size: 7px; font-family: system-ui, sans-serif; color: var(--muted); }
+  /* Share button */
+  .share-btn { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 7px; font-size: 11px; font-family: system-ui, sans-serif; background: var(--honey-light); border: 1px solid rgba(140,110,50,0.25); border-radius: 7px; cursor: pointer; color: var(--honey-dark); transition: background 0.12s; margin-bottom: 14px; }
+  .share-btn:hover { background: #F0D090; }
+  /* Rating label */
+  .rating-wrap { display: flex; align-items: center; gap: 6px; }
+  .rating-label { font-size: 11px; font-family: system-ui, sans-serif; font-weight: 600; }
+  /* Mobile */
+  @media (max-width: 700px) {
+    .app-body { flex-direction: column; height: auto; min-height: calc(100vh - 60px); }
+    #map { height: 52vw; min-height: 220px; flex: none; }
+    .sidebar { width: 100%; border-left: none; border-top: 1px solid var(--border); }
+    header { padding: 10px 14px; }
+    header h1 { font-size: 16px; }
+    header p { display: none; }
+    .results-area { max-height: 60vh; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🐝</div>
+  <div>
+    <h1>Bee Forage Analyser</h1>
+    <p>Click the map to place a hive · Powered by CROME 2025 (DEFRA/RPA)</p>
+  </div>
+</header>
+
+<div class="app-body">
+  <div id="map"></div>
+  <div class="sidebar">
+    <div class="s-section">
+      <h2>Hive location</h2>
+      <div class="search-row">
+        <input type="text" id="addr" placeholder="Address or postcode…" autocomplete="off">
+        <button id="addr-btn" aria-label="Search">&#x2315;</button>
+      </div>
+      <div class="coords" id="coords">Click the map or search above</div>
+      <div class="hive-btns" id="hive-btns"></div>
+    </div>
+    <div class="s-section">
+      <h2>Season</h2>
+      <canvas id="tl" height="112"></canvas>
+      <p class="hint">Drag to set date. Bands shift once a hive is placed.</p>
+    </div>
+    <div class="s-section">
+      <button class="btn" id="btn" disabled>Place a hive first</button>
+    </div>
+    <div class="results-area" id="results">
+      <div class="empty">
+        <span class="icon">🍯</span>
+        <p>Place a hive on the map then click Analyse to see which crops your bees are likely working.</p>
+      </div>
+    </div>
+    <div class="attribution">CROME 2025 © Rural Payments Agency · Open Government Licence v3.0</div>
+  </div>
+</div>
+
+<script>
+const WFS = 'https://environment.data.gov.uk/spatialdata/crop-map-of-england-2025/wfs';
+const WFS_LAYER = 'dataset-04dc895b-e25d-485d-9b0c-d912a0259da8:Prediction';
+const HIVE_COLORS = ['#E8A020', '#4080C8', '#50A860'];
+const MAX_HIVES = 3;
+
+const LC = {
+  AC66:{n:'Winter wheat',      c:'#E8A020',bee:false},
+  AC63:{n:'Winter barley',     c:'#C87010',bee:false},
+  AC01:{n:'Spring barley',     c:'#D4A030',bee:false},
+  AC32:{n:'Spring wheat',      c:'#F0B840',bee:false},
+  AC65:{n:'Winter oats',       c:'#A07820',bee:false},
+  AC19:{n:'Spring oats',       c:'#B08828',bee:false},
+  AC68:{n:'Winter rye',        c:'#B09050',bee:false},
+  AC24:{n:'Spring rye',        c:'#C0A060',bee:false},
+  AC17:{n:'Maize',             c:'#88C020',bee:false},
+  AC03:{n:'Beet',              c:'#60A840',bee:false},
+  AC44:{n:'Potatoes',          c:'#8A7050',bee:false},
+  AC07:{n:'Carrot',            c:'#E07830',bee:false},
+  AC100:{n:'Italian ryegrass', c:'#78B848',bee:false},
+  // days: [start, end] day-of-year at 52.5°N reference; nectar: relative yield 0–1
+  AC67:{n:'Winter oilseed rape',   c:'#D4C010',bee:true,nectar:0.95,days:[95,130]},
+  AC36:{n:'Spring oilseed rape',   c:'#E0CC18',bee:true,nectar:0.95,days:[115,152]},
+  AC04:{n:'Borage',                c:'#5068D0',bee:true,nectar:1.00,days:[165,270]},
+  AC64:{n:'Winter linseed',        c:'#7080C8',bee:true,nectar:0.30,days:[165,235]},
+  AC16:{n:'Spring linseed',        c:'#8090D0',bee:true,nectar:0.30,days:[170,240]},
+  AC27:{n:'Strawberry',            c:'#E05050',bee:true,nectar:0.20,days:[100,150]},
+  AC81:{n:'Poppy',                 c:'#C83030',bee:true,nectar:0.10,days:[160,220]},
+  CA02:{n:'Cover crop',            c:'#70C870',bee:true,nectar:0.75,days:[190,290]},
+  LG20:{n:'Winter field beans',    c:'#508858',bee:true,nectar:0.60,days:[120,160]},
+  LG03:{n:'Spring field beans',    c:'#60A868',bee:true,nectar:0.60,days:[140,180]},
+  LG21:{n:'Winter peas',           c:'#70B840',bee:true,nectar:0.25,days:[120,160]},
+  LG07:{n:'Spring peas',           c:'#80C850',bee:true,nectar:0.25,days:[135,175]},
+  LG14:{n:'Clover',                c:'#58C878',bee:true,nectar:0.95,days:[135,275]},
+  LG11:{n:'Lucerne',               c:'#48B868',bee:true,nectar:0.70,days:[160,245]},
+  LG08:{n:'Soya',                  c:'#98C840',bee:true,nectar:0.25,days:[200,265]},
+  PG01:{n:'Permanent grassland',   c:'#58A858',bee:true,nectar:0.35,days:[100,280]},
+  TG01:{n:'Temporary grassland',   c:'#78C868',bee:true,nectar:0.25,days:[130,250]},
+  FA01:{n:'Fallow land',           c:'#C8B888',bee:true,nectar:0.45,days:[130,270]},
+  HE02:{n:'Heathland',             c:'#9068A0',bee:true,nectar:0.90,days:[200,265]},
+  SR01:{n:'Short rotation coppice',c:'#486828',bee:true,nectar:0.45,days:[45,95]},
+  WO12:{n:'Trees & scrub',         c:'#286828',bee:true,nectar:0.50,days:[100,280]},
+  TC01:{n:'Perennial crops & orchards',c:'#E07060',bee:true,nectar:0.35,days:[75,125]},
+  NU01:{n:'Nursery crops',         c:'#D060A0',bee:true,nectar:0.30,days:[100,270]},
+  WA00:{n:'Water',                 c:'#4080C8',bee:false},
+  NA01:{n:'Non-agricultural',      c:'#A8A0A0',bee:false},
+  AC00:{n:'Unknown / mixed',       c:'#907070',bee:false},
+};
+
+const HONEY = {
+  AC67:'Winter oilseed rape — crystallises fast, pale yellow, mild and sweet. The classic English spring honey.',
+  AC36:'Spring oilseed rape — crystallises fast, pale yellow, mild and sweet.',
+  LG20:'Bean blossom — pale, sweet with a slightly herby character.',
+  LG03:'Bean blossom — pale, sweet with a slightly herby character.',
+  LG21:'Pea blossom — delicate and light, rarely sold as a varietal.',
+  LG07:'Pea blossom — delicate and light, rarely sold as a varietal.',
+  TC01:'Fruit blossom — complex, light and fragrant with fruity undertones.',
+  AC04:'Borage honey — light, crystallises very slowly, prized by beekeepers.',
+  LG14:'Clover honey — classic light, sweet and mild. The most popular varietal in England.',
+  LG11:'Lucerne (alfalfa) honey — light, fragrant and slow to crystallise.',
+  PG01:'Clover and meadow flowers dominant — classic British wildflower honey.',
+  TG01:'Mixed grassland flowers — rich, complex wildflower honey.',
+  WO12:'Woodland edge — balsam, bramble, lime possible. Dark, rich honey.',
+  AC64:'Linseed — light and mild, slow to crystallise.',
+  AC16:'Linseed — light and mild, slow to crystallise.',
+  HE02:'Heather dominant — dark, rich, strongly flavoured ling heather honey. A premium varietal.',
+  AC81:'Poppy fields nearby — bees collect pollen not nectar from poppy, honey likely mixed wildflower.',
+  CA02:'Cover crop forage — likely phacelia or clover mix. Excellent bee forage, produces light fragrant honey.',
+};
+
+// ── State ────────────────────────────────────────────────────────────────────
+let hives = [];       // { lat, lng, pin, layers, color }
+let activeIdx = 0;    // which hive slot is selected/being placed
+let lat = null, lng = null;  // active hive coords (for timeline, rings)
+let map, rings = [];
+
+// ── Map setup ────────────────────────────────────────────────────────────────
+map = L.map('map').setView([52.5, -1.5], 7);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>', maxZoom: 19
+}).addTo(map);
+map.on('click', e => placeHive(e.latlng.lat, e.latlng.lng));
+
+// ── Hive management ──────────────────────────────────────────────────────────
+function placeHive(hiveLat, hiveLng) {
+  const color = HIVE_COLORS[activeIdx] || HIVE_COLORS[0];
+  if (hives[activeIdx]?.pin) map.removeLayer(hives[activeIdx].pin);
+  const pin = L.marker([hiveLat, hiveLng], {
+    icon: L.divIcon({
+      html: `<div style="width:24px;height:24px;background:${color};border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 1px 4px rgba(0,0,0,.4)">${activeIdx+1}</div>`,
+      iconSize:[24,24], iconAnchor:[12,12], className:''
+    })
+  }).addTo(map);
+  hives[activeIdx] = { lat: hiveLat, lng: hiveLng, pin, layers: hives[activeIdx]?.layers || [], color };
+  lat = hiveLat; lng = hiveLng;
+  map.setView([hiveLat, hiveLng], Math.max(map.getZoom(), 13));
+  document.getElementById('coords').textContent = `${hiveLat.toFixed(5)}°N   ${hiveLng.toFixed(5)}°E`;
+  document.getElementById('btn').disabled = false;
+  document.getElementById('btn').textContent = 'Analyse forage';
+  updateHiveButtons();
+  drawRings();
+  drawTimeline();
+  pushURL();
+}
+
+function selectHive(idx) {
+  activeIdx = idx;
+  if (hives[idx]) {
+    lat = hives[idx].lat; lng = hives[idx].lng;
+    document.getElementById('coords').textContent = `${lat.toFixed(5)}°N   ${lng.toFixed(5)}°E`;
+    drawRings(); drawTimeline();
+  }
+  updateHiveButtons();
+}
+
+function addHive() {
+  if (hives.length >= MAX_HIVES) return;
+  activeIdx = hives.length;
+  document.getElementById('coords').textContent = `Click map to place Hive ${activeIdx + 1}`;
+  updateHiveButtons();
+}
+
+function updateHiveButtons() {
+  const container = document.getElementById('hive-btns');
+  container.innerHTML = '';
+  hives.forEach((h, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'hive-btn' + (i === activeIdx ? ' active' : '');
+    btn.style.setProperty('--hc', h.color);
+    btn.textContent = `Hive ${i + 1}`;
+    btn.onclick = () => selectHive(i);
+    container.appendChild(btn);
+  });
+  if (hives.length > 0 && hives.length < MAX_HIVES) {
+    const addBtn = document.createElement('button');
+    addBtn.className = 'hive-btn add';
+    addBtn.textContent = '+ Add hive';
+    addBtn.onclick = addHive;
+    container.appendChild(addBtn);
+  }
+}
+
+// ── Address search ───────────────────────────────────────────────────────────
+async function geocode() {
+  const q = document.getElementById('addr').value.trim();
+  if (!q) return;
+  const addrBtn = document.getElementById('addr-btn');
+  addrBtn.textContent = '…'; addrBtn.disabled = true;
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&countrycodes=gb&limit=1`,
+      { headers: { 'Accept-Language': 'en' } }
+    );
+    const data = await res.json();
+    if (!data.length) { showError('Address not found — try a postcode or town name.'); return; }
+    placeHive(parseFloat(data[0].lat), parseFloat(data[0].lon));
+    document.getElementById('addr').value = data[0].display_name.split(',').slice(0, 2).join(',');
+  } catch (e) {
+    showError('Geocoding failed: ' + e.message);
+  } finally {
+    addrBtn.textContent = '⌕'; addrBtn.disabled = false;
+  }
+}
+document.getElementById('addr-btn').addEventListener('click', geocode);
+document.getElementById('addr').addEventListener('keydown', e => { if (e.key === 'Enter') geocode(); });
+
+// ── Seasonal timeline ────────────────────────────────────────────────────────
+const TL_CROPS = [
+  { lc:'SR01', label:'Willow'  }, { lc:'TC01', label:'Blossom' },
+  { lc:'AC67', label:'OSR'     }, { lc:'LG20',  label:'Beans'   },
+  { lc:'LG14', label:'Clover'  }, { lc:'AC04',  label:'Borage'  },
+  { lc:'WO12', label:'Scrub'   }, { lc:'HE02',  label:'Heather' },
+];
+const MONTH_STARTS = [1,32,60,91,121,152,182,213,244,274,305,335];
+const MONTH_LABELS = ['J','F','M','A','M','J','J','A','S','O','N','D'];
+
+function doyNow() { const d=new Date(),s=new Date(d.getFullYear(),0,0); return Math.floor((d-s)/86400000); }
+let selectedDoy = doyNow();
+const tlCanvas = document.getElementById('tl');
+
+function doyToX(doy,L,W) { return L+(doy-1)/364*W; }
+function xToDoy(x,L,W)   { return Math.max(1,Math.min(365,Math.round(1+(x-L)/W*364))); }
+function doyToLabel(doy)  { return new Date(new Date().getFullYear(),0,doy).toLocaleDateString('en-GB',{day:'numeric',month:'short'}); }
+
+function drawTimeline() {
+  const W = tlCanvas.offsetWidth || 304;
+  if (tlCanvas.width !== W) tlCanvas.width = W;
+  const ctx = tlCanvas.getContext('2d'), H = tlCanvas.height;
+  const CL = 50, CW = W - CL - 6, ROW_H = 9, GAP = 2, TOP = 15;
+  const latOff = lat !== null ? Math.round((lat - 52.5) * 3.5) : 0;
+  ctx.clearRect(0, 0, W, H);
+  ctx.font = '8px system-ui,sans-serif'; ctx.textAlign = 'center';
+  MONTH_STARTS.forEach((d, i) => {
+    const x = doyToX(d, CL, CW);
+    ctx.fillStyle = '#B09A78'; ctx.fillText(MONTH_LABELS[i], x, 10);
+    ctx.strokeStyle = 'rgba(140,110,50,0.10)'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(x, 12); ctx.lineTo(x, H - 14); ctx.stroke();
+  });
+  TL_CROPS.forEach(({ lc, label }, i) => {
+    const y = TOP + i * (ROW_H + GAP), info = LC[lc];
+    ctx.font = '8px system-ui,sans-serif'; ctx.fillStyle = '#8A7A60'; ctx.textAlign = 'right';
+    ctx.fillText(label, CL - 4, y + ROW_H - 1);
+    ctx.fillStyle = 'rgba(140,110,50,0.07)'; ctx.fillRect(CL, y, CW, ROW_H);
+    if (info?.days) {
+      const s = Math.max(1, info.days[0]+latOff), e = Math.min(365, info.days[1]+latOff);
+      ctx.fillStyle = (info.c||'#888')+'BB';
+      ctx.fillRect(doyToX(s,CL,CW), y, doyToX(e,CL,CW)-doyToX(s,CL,CW), ROW_H);
+    }
+  });
+  const cx = doyToX(selectedDoy, CL, CW);
+  ctx.strokeStyle = '#1A1208'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(cx, 12); ctx.lineTo(cx, H - 14); ctx.stroke();
+  ctx.fillStyle = '#1A1208';
+  ctx.beginPath(); ctx.moveTo(cx-4,12); ctx.lineTo(cx+4,12); ctx.lineTo(cx,17); ctx.fill();
+  const lbl = doyToLabel(selectedDoy);
+  ctx.font = 'bold 9px system-ui,sans-serif'; ctx.textAlign = 'center';
+  const lw = ctx.measureText(lbl).width;
+  const lx = Math.max(CL+lw/2+2, Math.min(W-lw/2-2, cx));
+  ctx.fillStyle = '#FFFEF9'; ctx.fillRect(lx-lw/2-2, H-13, lw+4, 12);
+  ctx.fillStyle = '#7A4F0A'; ctx.fillText(lbl, lx, H-3);
+}
+
+let tlDragging = false;
+function tlUpdate(x) { selectedDoy = xToDoy(x, 50, (tlCanvas.offsetWidth||304)-56); drawTimeline(); }
+tlCanvas.addEventListener('mousedown',  e => { tlDragging=true;  tlUpdate(e.offsetX); });
+tlCanvas.addEventListener('mousemove',  e => { if(tlDragging) tlUpdate(e.offsetX); });
+tlCanvas.addEventListener('mouseup',    () => tlDragging=false);
+tlCanvas.addEventListener('mouseleave', () => tlDragging=false);
+tlCanvas.addEventListener('touchstart', e => { e.preventDefault(); tlDragging=true;  tlUpdate(e.touches[0].clientX-tlCanvas.getBoundingClientRect().left); },{passive:false});
+tlCanvas.addEventListener('touchmove',  e => { e.preventDefault(); if(tlDragging) tlUpdate(e.touches[0].clientX-tlCanvas.getBoundingClientRect().left); },{passive:false});
+tlCanvas.addEventListener('touchend',   () => tlDragging=false);
+drawTimeline();
+
+// ── Rings ────────────────────────────────────────────────────────────────────
+function drawRings() {
+  rings.forEach(r => map.removeLayer(r)); rings = [];
+  const color = hives[activeIdx]?.color || HIVE_COLORS[0];
+  [3000, 2000, 1000].forEach((rad, i) => {
+    rings.push(L.circle([lat, lng], {
+      radius: rad, color, fillColor: color,
+      fillOpacity: [0.04, 0.08, 0.15][i], weight: 1.2, dashArray: '5,4'
+    }).addTo(map));
+  });
+}
+
+// ── Analysis ─────────────────────────────────────────────────────────────────
+document.getElementById('btn').addEventListener('click', analyse);
+
+async function analyse() {
+  if (!hives.length) return;
+  hives.forEach(h => { h.layers?.forEach(l => map.removeLayer(l)); h.layers = []; });
+  const resultsEl = document.getElementById('results');
+  resultsEl.innerHTML = '<div class="loading"><div class="spinner"></div><p>Querying CROME 2025 WFS…</p></div>';
+  const btn = document.getElementById('btn');
+  btn.disabled = true; btn.textContent = 'Analysing…';
+
+  const allResults = [];
+  try {
+    for (const hive of hives) {
+      const dLat = 3000 / 111320;
+      const dLng = 3000 / (111320 * Math.cos(hive.lat * Math.PI / 180));
+      const bbox = `${hive.lng-dLng},${hive.lat-dLat},${hive.lng+dLng},${hive.lat+dLat},EPSG:4326`;
+      const url = `${WFS}?service=WFS&version=2.0.0&request=GetFeature&typeNames=${WFS_LAYER}&outputFormat=application/json&srsName=EPSG:4326&bbox=${bbox}&count=5000`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const features = data.features || [];
+      if (!features.length) { allResults.push({ hive, features:[], results:null, calendar:null }); continue; }
+
+      const results  = computeWeights(features, 3000, 2.0, selectedDoy, hive.lat, hive.lng);
+      const calendar = computeCalendar(features, hive.lat, hive.lng);
+
+      for (const f of features) {
+        if (!f.geometry) continue;
+        const lc = f.properties?.lucode || f.properties?.LUCODE || 'NA01';
+        const info = LC[lc] || { c:'#888', n:lc };
+        const area = f.properties?.shape_area || f.properties?.SHAPE_Area || approxArea(f.geometry);
+        const c = centroid(f.geometry);
+        const dist = c ? haversine(hive.lat, hive.lng, c[1], c[0]) : null;
+        const parts = [info.n];
+        if (area)  parts.push((area/10000).toFixed(1) + ' ha');
+        if (dist)  parts.push(dist < 1000 ? Math.round(dist)+'m' : (dist/1000).toFixed(1)+'km');
+        const layer = L.geoJSON(f, {
+          style:{ color:info.c, fillColor:info.c, fillOpacity:0.45, weight:0.5 }
+        }).bindTooltip(parts.join(' · '), {sticky:true}).addTo(map);
+        hive.layers.push(layer);
+      }
+      allResults.push({ hive, features, results, calendar });
+    }
+    showResults(allResults);
+    pushURL();
+  } catch(e) {
+    const isCors = e.message.includes('fetch')||e.message.includes('Load')||e.message.includes('Failed')||e.message.includes('NetworkError');
+    showError(isCors
+      ? `<strong>CORS error</strong> — open a terminal in this file's folder and run:<br><br><code>python3 -m http.server 8080</code><br><br>Then visit <code>http://localhost:8080/bee-forage-analyser_1.html</code>`
+      : `Error: ${e.message}`);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Analyse forage';
+  }
+}
+
+// ── Computation ──────────────────────────────────────────────────────────────
+function computeWeights(features, rM, decay, doy, hiveLat, hiveLng) {
+  const latOff = Math.round((hiveLat - 52.5) * 3.5);
+  const wBee = {}, wOther = {};
+  for (const f of features) {
+    if (!f.geometry) continue;
+    const lc   = f.properties?.lucode || f.properties?.LUCODE || 'NA01';
+    const info = LC[lc];
+    const area = f.properties?.shape_area || f.properties?.SHAPE_Area || approxArea(f.geometry);
+    if (!area || area < 1) continue;
+    const prob = f.properties?.prob ?? 1;
+    const c    = centroid(f.geometry); if (!c) continue;
+    const dist = haversine(hiveLat, hiveLng, c[1], c[0]);
+    if (dist > rM) continue;
+    const t = Math.max(dist, 50) / rM;
+    const score = area * prob / Math.pow(t + 0.1, decay);
+    if (info?.bee === false) {
+      wOther[lc] = (wOther[lc] || 0) + score;
+    } else {
+      if (info?.days) {
+        if (doy < info.days[0]+latOff || doy > info.days[1]+latOff) continue;
+      }
+      wBee[lc] = (wBee[lc] || 0) + score * (info?.nectar ?? 0.5);
+    }
+  }
+  const beeT = Object.values(wBee).reduce((s,v)=>s+v,0);
+  const allT = beeT + Object.values(wOther).reduce((s,v)=>s+v,0);
+  const toList = (w, tot) => Object.entries(w)
+    .map(([lc,wa]) => ({ lc, pct: tot>0 ? wa/tot*100 : 0, name: LC[lc]?.n||lc, color: LC[lc]?.c||'#888' }))
+    .sort((a,b) => b.pct-a.pct);
+  return { bee: toList(wBee,allT), other: toList(wOther,allT), beeTotal: allT>0 ? beeT/allT*100 : 0 };
+}
+
+function computeCalendar(features, hiveLat, hiveLng) {
+  return MONTH_STARTS.map(s => computeWeights(features, 3000, 2.0, s+14, hiveLat, hiveLng).beeTotal);
+}
+
+function siteRating(bee, calendar) {
+  const peak = Math.max(...calendar, 0);
+  const div  = bee.length;
+  const gaps = calendar.filter(v => v < 3).length;
+  if (peak > 25 && div >= 4 && gaps <= 3) return { grade:'A', bg:'#2A7A2A', label:'Excellent' };
+  if (peak > 12 && div >= 3 && gaps <= 5) return { grade:'B', bg:'#6A9A20', label:'Good' };
+  if (peak > 4  && div >= 2)              return { grade:'C', bg:'#C88010', label:'Fair' };
+  return { grade:'D', bg:'#A03020', label:'Poor' };
+}
+
+function haversine(a,b,c,d) {
+  const R=6371000,p=Math.PI/180,dl=(c-a)*p,dn=(d-b)*p;
+  const x=Math.sin(dl/2)**2+Math.cos(a*p)*Math.cos(c*p)*Math.sin(dn/2)**2;
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+function centroid(g) {
+  try { const cs=g.type==='Polygon'?g.coordinates[0]:g.coordinates[0][0]; return [cs.reduce((s,c)=>s+c[0],0)/cs.length,cs.reduce((s,c)=>s+c[1],0)/cs.length]; }
+  catch { return null; }
+}
+function approxArea(g) {
+  try {
+    const cs=g.type==='Polygon'?g.coordinates[0]:g.coordinates[0][0]; let a=0;
+    for(let i=0,j=cs.length-1;i<cs.length;j=i++){
+      const xi=cs[i][0]*111320*Math.cos(cs[i][1]*Math.PI/180),yi=cs[i][1]*110540;
+      const xj=cs[j][0]*111320*Math.cos(cs[j][1]*Math.PI/180),yj=cs[j][1]*110540;
+      a+=xi*yj-xj*yi;
+    }
+    return Math.abs(a/2);
+  } catch { return 0; }
+}
+
+// ── Display ──────────────────────────────────────────────────────────────────
+function calendarHTML(calendar) {
+  const max = Math.max(...calendar, 1);
+  const cur = selectedDoy;
+  return `<div class="cal-section"><h4>Forage through the year</h4><div class="cal-wrap">${
+    calendar.map((v, i) => {
+      const h = Math.max(2, Math.round(v / max * 40));
+      const isCur = cur >= MONTH_STARTS[i] && (i===11 || cur < MONTH_STARTS[i+1]);
+      const col = v < 3 ? '#DDD' : isCur ? '#C87010' : '#E8A020';
+      return `<div class="cal-col"><div class="cal-bar" style="height:${h}px;background:${col}"></div><div class="cal-mo">${MONTH_LABELS[i]}</div></div>`;
+    }).join('')
+  }</div></div>`;
+}
+
+function showResults(allResults) {
+  const totalPolygons = allResults.reduce((s, r) => s + (r.features?.length || 0), 0);
+  const shareBtn = `<button class="share-btn" id="share-btn" onclick="copyShare()">Copy shareable link</button>`;
+
+  const cards = allResults.map(({ hive, features, results, calendar }) => {
+    if (!results) {
+      return `<div class="hive-card">
+        <div class="hive-card-head">
+          <div class="hive-label"><div class="hive-dot" style="background:${hive.color}"></div><strong>Hive ${hives.indexOf(hive)+1}</strong></div>
+        </div>
+        <p class="hint">No crop data found at this location. CROME only covers England.</p>
+      </div>`;
+    }
+    const { bee, other, beeTotal } = results;
+    const topBee = bee.slice(0, 10), topOther = other.slice(0, 5), dom = topBee[0];
+    const rt = siteRating(bee, calendar);
+    const hiveNum = hives.indexOf(hive) + 1;
+    return `<div class="hive-card">
+      <div class="hive-card-head">
+        <div class="hive-label">
+          <div class="hive-dot" style="background:${hive.color}"></div>
+          <strong>Hive ${hiveNum}</strong>
+          <span>${doyToLabel(selectedDoy)} · ${(features.length).toLocaleString()} polygons</span>
+        </div>
+        <div class="rating" style="background:${rt.bg}" title="${rt.label}">${rt.grade}</div>
+      </div>
+      <div class="stat-row">
+        <div class="stat"><div class="stat-label">Forage score</div><div class="stat-val">${beeTotal.toFixed(0)}%</div></div>
+        <div class="stat"><div class="stat-label">Top source</div><div class="stat-val" style="font-size:11px">${dom ? dom.name : '—'}</div></div>
+        <div class="stat"><div class="stat-label">In season</div><div class="stat-val">${bee.length}</div></div>
+      </div>
+      ${calendarHTML(calendar)}
+      ${topBee.length ? `<div class="crop-list">${topBee.map(r=>`
+        <div class="crop-item">
+          <div class="crop-hdr"><span class="crop-name">${r.name}</span><span class="crop-pct">${r.pct.toFixed(1)}%</span></div>
+          <div class="bar-track"><div class="bar-fill" style="width:${Math.min(r.pct,100).toFixed(1)}%;background:${r.color}"></div></div>
+        </div>`).join('')}
+      </div>` : '<p class="hint" style="margin-bottom:8px">Nothing in flower at this date.</p>'}
+      ${dom ? `<div class="honey-box"><h3>Honey profile prediction</h3><p>${HONEY[dom.lc]||'Mixed foraging landscape dominated by '+dom.name.toLowerCase()+'.'}</p></div>` : ''}
+      ${topOther.length ? `<details style="margin-top:10px"><summary style="font-size:11px;font-family:system-ui,sans-serif;color:var(--muted);cursor:pointer">Non-forageable land (wind-pollinated / harvested before flowering)</summary>
+        <div class="crop-list" style="margin-top:8px;opacity:0.6">${topOther.map(r=>`
+          <div class="crop-item">
+            <div class="crop-hdr"><span class="crop-name">${r.name}</span><span class="crop-pct">${r.pct.toFixed(1)}%</span></div>
+            <div class="bar-track"><div class="bar-fill" style="width:${Math.min(r.pct,100).toFixed(1)}%;background:#aaa"></div></div>
+          </div>`).join('')}
+        </div></details>` : ''}
+    </div>`;
+  }).join('');
+
+  document.getElementById('results').innerHTML = shareBtn + cards;
+}
+
+function showError(msg) {
+  document.getElementById('results').innerHTML = `<div class="error">${msg}</div>`;
+}
+
+// ── URL sharing ───────────────────────────────────────────────────────────────
+function pushURL() {
+  const p = new URLSearchParams();
+  hives.forEach((h, i) => p.set(`h${i}`, `${h.lat.toFixed(5)},${h.lng.toFixed(5)}`));
+  p.set('doy', selectedDoy);
+  history.replaceState(null, '', '#' + p.toString());
+}
+
+function copyShare() {
+  pushURL();
+  navigator.clipboard.writeText(location.href).then(() => {
+    const btn = document.getElementById('share-btn');
+    if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { if(btn) btn.textContent = 'Copy shareable link'; }, 1800); }
+  });
+}
+
+function restoreURL() {
+  if (!location.hash || location.hash.length < 3) return;
+  try {
+    const p = new URLSearchParams(location.hash.slice(1));
+    if (p.has('doy')) { selectedDoy = parseInt(p.get('doy')); drawTimeline(); }
+    let i = 0;
+    while (p.has(`h${i}`)) {
+      const [la, ln] = p.get(`h${i}`).split(',').map(Number);
+      activeIdx = i;
+      placeHive(la, ln);
+      i++;
+    }
+    if (i > 0) activeIdx = 0; // re-select first hive after restore
+  } catch(e) { console.warn('URL restore failed', e); }
+}
+restoreURL();
+</script>
+</body>
+</html>
